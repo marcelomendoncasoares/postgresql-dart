@@ -314,6 +314,41 @@ class PgConnectionImplementation extends _PgSessionBase implements Connection {
     final host = endpoint.host;
     final port = endpoint.port;
 
+    final tlsConnector = settings.tlsConnector;
+    if (tlsConnector != null &&
+        settings.sslMode != SslMode.disable &&
+        !endpoint.isUnixSocket) {
+      // As with `SecureSocket.secure` below, `.timeout()` doesn't cancel the
+      // connector, so a socket it returns after we gave up is destroyed.
+      var gaveUp = false;
+      final connected = tlsConnector(
+        host,
+        port,
+        sslMode: settings.sslMode,
+        timeout: settings.connectTimeout,
+      );
+      unawaited(
+        connected
+            .then((s) {
+              if (gaveUp) {
+                s.destroy();
+              }
+            })
+            .catchError((_) {}),
+      );
+      final socket = await connected.timeout(
+        settings.connectTimeout,
+        onTimeout: () {
+          gaveUp = true;
+          throw TimeoutException('TLS connection timed out');
+        },
+      );
+      return (
+        _channelOver(socket, socket, codecContext, incomingBytesTransformer),
+        true,
+      );
+    }
+
     var socket = await Socket.connect(
       endpoint.isUnixSocket
           ? InternetAddress(host, type: InternetAddressType.unix)
@@ -445,8 +480,26 @@ class PgConnectionImplementation extends _PgSessionBase implements Connection {
       adaptedStream = async.SubscriptionStream(subscription);
     }
 
+    return (
+      _channelOver(
+        socket,
+        adaptedStream,
+        codecContext,
+        incomingBytesTransformer,
+      ),
+      secure,
+    );
+  }
+
+  /// The message channel over [socket], reading from [incoming].
+  static StreamChannel<Message> _channelOver(
+    Socket socket,
+    Stream<Uint8List> incoming,
+    CodecContext codecContext,
+    StreamTransformer<Uint8List, Uint8List>? incomingBytesTransformer,
+  ) {
     if (incomingBytesTransformer != null) {
-      adaptedStream = adaptedStream.transform(incomingBytesTransformer);
+      incoming = incoming.transform(incomingBytesTransformer);
     }
 
     final outgoingSocket = async.StreamSinkExtensions(socket).transform<Uint8List>(
@@ -460,13 +513,10 @@ class PgConnectionImplementation extends _PgSessionBase implements Connection {
       ),
     );
 
-    return (
-      StreamChannel<List<int>>(
-        adaptedStream,
-        outgoingSocket,
-      ).transform(messageTransformer(codecContext)),
-      secure,
-    );
+    return StreamChannel<List<int>>(
+      incoming,
+      outgoingSocket,
+    ).transform(messageTransformer(codecContext));
   }
 
   final Endpoint _endpoint;

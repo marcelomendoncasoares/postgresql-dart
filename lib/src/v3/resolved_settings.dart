@@ -85,6 +85,8 @@ class ResolvedConnectionSettings extends ResolvedSessionSettings
   final TypeRegistry typeRegistry;
   @override
   final Future<void> Function(Connection connection)? onOpen;
+  @override
+  final TlsConnector? tlsConnector;
 
   ResolvedConnectionSettings(
     ConnectionSettings? super.settings,
@@ -103,7 +105,8 @@ class ResolvedConnectionSettings extends ResolvedSessionSettings
       // TODO: consider merging the type registries
       typeRegistry =
           settings?.typeRegistry ?? fallback?.typeRegistry ?? TypeRegistry(),
-      onOpen = settings?.onOpen ?? fallback?.onOpen;
+      onOpen = settings?.onOpen ?? fallback?.onOpen,
+      tlsConnector = settings?.tlsConnector ?? fallback?.tlsConnector;
 
   bool isMatchingConnection(ResolvedConnectionSettings other) {
     // `onOpen` deliberately isn't compared: it only runs once, when a
@@ -117,6 +120,7 @@ class ResolvedConnectionSettings extends ResolvedSessionSettings
         encoding == other.encoding &&
         sslMode == other.sslMode &&
         securityContext == other.securityContext &&
+        tlsConnector == other.tlsConnector &&
         transformer == other.transformer &&
         replicationMode == other.replicationMode &&
         typeRegistry == other.typeRegistry;
